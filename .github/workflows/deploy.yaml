@@ -10,7 +10,7 @@ jobs:
     steps:
       - name: Install sshpass
         run: |
-          sudo apt-get update
+          sudo apt-get update -y
           sudo apt-get install -y sshpass
 
       - name: Deploy to VPS via sshpass
@@ -21,8 +21,8 @@ jobs:
         run: |
           sshpass -p "$VPS_PASSWORD" ssh -o StrictHostKeyChecking=no $VPS_USER@$VPS_HOST <<'ENDSSH'
             # Set project variables
-            export PROJECT_NAME="demo-app"
-            export APP_DIR="/apps/demo-app"
+            export PROJECT_NAME="landing-app"
+            export APP_DIR="/apps/landing-server"
 
             # Setup PATH for tools
             export PATH="$PATH:/usr/bin:/usr/local/bin:$HOME/.local/bin"
