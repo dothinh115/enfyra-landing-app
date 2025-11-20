@@ -1,0 +1,545 @@
+<script setup lang="ts">
+const props = defineProps<{
+  modelValue: any[];
+}>();
+
+const isEditing = ref(false);
+const editingIndex = ref<number | null>(null);
+const currentColumn = ref<any>(null);
+const columns = useModel(props, "modelValue");
+const isNew = ref(false);
+const errors = ref<Record<string, string>>({});
+
+const { generateEmptyForm, validate } = useSchema("column_definition");
+const { deleteIds, getIdFieldName, isMongoDB } = useDatabase();
+
+const showCloseConfirm = ref(false);
+const hasFormChanges = ref(false);
+const formEditorRef = ref();
+
+// Handle drawer close
+function handleDrawerClose() {
+  // Check if there are unsaved changes
+  if (hasFormChanges.value) {
+    showCloseConfirm.value = true;
+    // Reopen drawer to show modal
+    isEditing.value = true;
+  }
+}
+
+function cancelDrawer() {
+  isEditing.value = false;
+}
+
+function discardChanges() {
+  // Reset form changes
+  formEditorRef.value?.confirmChanges();
+  // Reset errors
+  errors.value = {};
+  showCloseConfirm.value = false;
+  isEditing.value = false;
+  isNew.value = false;
+  currentColumn.value = null;
+  editingIndex.value = null;
+}
+
+// Centralized UUID logic
+function handleUuidType(column: any): any {
+  if (column.type === "uuid") {
+    column.isGenerated = true;
+    delete column.defaultValue;
+  }
+  return column;
+}
+
+function createEmptyColumn(): any {
+  return generateEmptyForm();
+}
+
+function editColumn(col: any, index: number) {
+  isEditing.value = true;
+
+  if (!col) return;
+  editingIndex.value = index;
+  currentColumn.value = { ...toRaw(col) };
+
+  // For MongoDB _id, force type to uuid (override any existing type)
+  if (isMongoDB.value && currentColumn.value.name === getIdFieldName()) {
+    currentColumn.value.type = "uuid";
+  }
+
+  // Use centralized UUID logic
+  handleUuidType(currentColumn.value);
+}
+
+function saveColumn() {
+  const customValidators = {
+    name: (value: string) => {
+      if (!value?.trim()) {
+        return "Column name is required";
+      }
+      if (!TABLE_NAME_FIELD_REGEX.test(value)) {
+        return "Only letters, numbers, _ allowed and cannot start with number or _!";
+      }
+      return null;
+    },
+    type: (value: string) => {
+      if (!value) {
+        return "Must select data type";
+      }
+      return null;
+    }
+  };
+
+  const { isValid, errors: validationErrors } = validate(currentColumn.value, customValidators);
+  
+  if (!isValid) {
+    errors.value = validationErrors;
+    return;
+  }
+
+  const newCol = { ...currentColumn.value };
+
+  // Use centralized UUID logic
+  handleUuidType(newCol);
+
+  if (isNew.value) {
+    columns.value.push(newCol);
+  } else if (editingIndex.value != null) {
+    columns.value.splice(editingIndex.value, 1, newCol);
+  }
+
+  // Reset form changes before closing
+  formEditorRef.value?.confirmChanges();
+  
+  isEditing.value = false;
+  isNew.value = false;
+  currentColumn.value = null;
+  editingIndex.value = null;
+}
+
+function addNewColumn() {
+  isNew.value = true;
+  isEditing.value = true;
+  currentColumn.value = createEmptyColumn();
+  currentColumn.value.isNullable = true;
+  currentColumn.value.isUpdatable = true;
+  currentColumn.value.isPrimary = false; // New columns are never primary by default
+  currentColumn.value.isGenerated = false; // User-defined columns are not auto-generated
+  currentColumn.value.isSystem = false; // User-created columns are not system columns
+  editingIndex.value = null;
+  deleteIds(currentColumn.value);
+
+  // Set default type based on database
+  if (!currentColumn.value.type) {
+    currentColumn.value.type = isMongoDB.value ? "uuid" : "varchar";
+  }
+
+  // Use centralized UUID logic
+  handleUuidType(currentColumn.value);
+}
+
+
+function getUuidTypeMap() {
+  return {
+    defaultValue: {
+      type: "text",
+      disabled: true,
+      placeholder: "Auto-generated UUID",
+    },
+    isGenerated: {
+      type: "boolean",
+      disabled: true,
+      default: true,
+    },
+    options: {
+      excluded: true,
+    },
+  };
+}
+
+function getArrayEnumTypeMap(currentType: string, options: any[]) {
+  return {
+    options: {
+      type: "array-tags",
+    },
+    defaultValue: {
+      type: currentType,
+      options,
+      ...(!options?.length && {
+        excluded: true,
+      }),
+    },
+  };
+}
+
+const { isMobile, isTablet } = useScreen();
+
+function getDefaultValueType(columnType: string) {
+  switch (columnType) {
+    case "boolean":
+      return "boolean";
+
+    case "int":
+    case "float":
+      return "number";
+
+    case "date":
+      return "date";
+
+    case "text":
+    case "richtext":
+    case "varchar":
+    case "uuid":
+      return "text";
+
+    case "code":
+      return "code";
+
+    case "array-select":
+      return "array-select";
+
+    case "enum":
+      return "enum";
+
+    default:
+      return "text";
+  }
+}
+
+const typeMap = computed(() => {
+  const currentType = currentColumn.value?.type;
+  const isPrimaryColumn = currentColumn.value?.name === getIdFieldName();
+
+  return {
+    type: {
+      type: "enum",
+      options:
+        isPrimaryColumn
+          ? isMongoDB.value
+            ? columnTypes.filter((colType) => colType.value === "uuid") // MongoDB _id only supports uuid
+            : columnTypes.filter((colType) => ["uuid", "int"].includes(colType.value)) // SQL id supports uuid or int
+          : columnTypes,
+      default: isPrimaryColumn && isMongoDB.value ? "uuid" : undefined, // Default to uuid for MongoDB _id
+    },
+    name: {
+      disabled: currentColumn.value?.name === getIdFieldName(),
+    },
+    defaultValue: getDefaultValueType(currentType),
+    // Apply UUID type mapping
+    ...(currentType === "uuid" && getUuidTypeMap()),
+    // Apply array/enum type mapping
+    ...(["array-select", "enum"].includes(currentType) &&
+      getArrayEnumTypeMap(currentType, currentColumn.value?.options)),
+
+    ...(currentType === "text" && {
+      defaultValue: {
+        excluded: true,
+      },
+    }),
+
+    // Exclude options field for other types
+    ...(!["array-select", "enum"].includes(currentType) &&
+      currentType !== "uuid" && {
+        options: {
+          excluded: true,
+        },
+      }),
+  };
+});
+
+onMounted(() => {
+  const primaryColumn = createEmptyColumn();
+  const { getIdFieldName, isMongoDB } = useDatabase();
+  primaryColumn.name = getIdFieldName();
+  primaryColumn.type = isMongoDB.value ? "uuid" : "int"; // MongoDB uses uuid, SQL can use int
+  primaryColumn.isPrimary = true;
+  primaryColumn.isGenerated = true;
+  primaryColumn.isNullable = false;
+  deleteIds(primaryColumn);
+  if (!columns.value.length) columns.value.push(primaryColumn);
+});
+
+// Handle type changes and options changes
+function handleTypeChange(newType: string, oldType: string) {
+  if (!currentColumn.value) return;
+
+  if (newType === "uuid" && oldType !== "uuid") {
+    handleUuidType(currentColumn.value);
+  } else if (oldType === "uuid" && newType !== "uuid") {
+    currentColumn.value.isGenerated = false;
+    const defaultValueType = getDefaultValueType(newType);
+    if (defaultValueType) {
+      currentColumn.value.defaultValue = null;
+    }
+  }
+}
+
+function handleOptionsChange(currentType: string, newOptions: any[]) {
+  if (!currentColumn.value) return;
+  if (!["array-select", "enum"].includes(currentType)) return;
+
+  // If no options, hide defaultValue
+  if (!newOptions || newOptions.length === 0) {
+    if (currentColumn.value.defaultValue) {
+      delete currentColumn.value.defaultValue;
+    }
+    return;
+  }
+
+  // Sanitize defaultValue to keep only existing values in options
+  if (currentColumn.value.defaultValue) {
+    if (currentType === "array-select") {
+      // For array-select, defaultValue is array
+      if (Array.isArray(currentColumn.value.defaultValue)) {
+        currentColumn.value.defaultValue =
+          currentColumn.value.defaultValue.filter((value: any) => {
+            const val = typeof value === "object" ? value.value : value;
+            return newOptions.includes(val);
+          });
+      }
+    } else if (currentType === "enum") {
+      // For enum, defaultValue is single value
+      const val =
+        typeof currentColumn.value.defaultValue === "object"
+          ? currentColumn.value.defaultValue.value
+          : currentColumn.value.defaultValue;
+
+      if (!newOptions.includes(val)) {
+        currentColumn.value.defaultValue = null;
+      }
+    }
+  }
+}
+
+// Unified watcher to handle both type and options changes
+watch(
+  () => [currentColumn.value?.type, currentColumn.value?.options],
+  ([newType, newOptions], [oldType]) => {
+    if (newType !== oldType) {
+      handleTypeChange(newType, oldType);
+    }
+
+    if (newType && ["array-select", "enum"].includes(newType)) {
+      handleOptionsChange(newType, newOptions);
+    }
+  },
+  { deep: true }
+);
+</script>
+
+<template>
+  <div class="space-y-2">
+    <div class="flex items-center gap-2 text-lg font-semibold text-muted">
+      <UIcon name="lucide:columns" class="w-5 h-5" />
+      Columns
+    </div>
+    <div
+      v-for="(column, index) in columns"
+      :key="column.id ?? index"
+      class="flex items-center justify-between rounded-lg border border-muted lg:hover:bg-muted/50 transition"
+    >
+      <!-- Click section to edit -->
+      <div
+        class="flex items-center gap-2 flex-1 cursor-pointer px-4 py-3"
+        @click="editColumn(column, index)"
+      >
+        <UIcon name="lucide:type" class="w-4 h-4 text-muted-foreground" />
+        <span class="text-sm font-medium">
+          {{ column.name || "Unnamed" }}
+        </span>
+
+        <UBadge size="xs" color="info" v-if="column.type">
+          {{ column.type }}
+        </UBadge>
+        <UBadge size="xs" color="info" v-if="column.isNullable"
+          >nullable</UBadge
+        >
+      </div>
+
+      <!-- Delete button -->
+      <UButton
+        icon="lucide:trash"
+        color="error"
+        variant="ghost"
+        size="xs"
+        :disabled="column.isSystem || column.isPrimary"
+        class="lg:hover:cursor-pointer mr-2"
+        @click.stop="columns.splice(index, 1)"
+      />
+    </div>
+
+    <!-- Add column -->
+    <div class="flex justify-end pt-2">
+      <UButton
+        icon="lucide:plus"
+        label="Add Column"
+        @click="addNewColumn()"
+        :size="(isMobile || isTablet) ? 'sm' : 'md'"
+      />
+    </div>
+  </div>
+
+  <!-- Edit Column Drawer -->
+  <Teleport to="body">
+    <UDrawer
+      :handle="false"
+      handle-only
+      v-model:open="isEditing"
+      direction="right"
+      :class="(isMobile || isTablet) ? 'w-full max-w-full' : 'min-w-xl max-w-xl'"
+      @update:open="(open) => { if (!open) handleDrawerClose() }"
+      :ui="{
+        header:
+          'border-b border-muted text-muted pb-2 flex items-center justify-between',
+      }"
+    >
+      <template #header>
+        <div
+          class="bg-gradient-to-r from-background/90 to-muted/20 rounded-t-xl w-full"
+        >
+          <div class="flex items-center justify-between w-full">
+            <div :class="(isMobile || isTablet) ? 'flex items-center gap-2 min-w-0 flex-1' : 'flex items-center gap-3'">
+              <div
+                :class="(isMobile || isTablet) ? 'w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-lg flex-shrink-0' : 'w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-lg'"
+              >
+                <UIcon name="lucide:columns" :class="(isMobile || isTablet) ? 'text-xs text-white' : 'text-sm text-white'" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <h2 :class="(isMobile || isTablet) ? 'text-base font-semibold text-foreground truncate' : 'text-xl font-semibold text-foreground'">
+                  {{ editingIndex !== null ? "Edit Column" : "New Column" }}
+                </h2>
+                <p :class="(isMobile || isTablet) ? 'text-xs text-muted-foreground truncate' : 'text-sm text-muted-foreground'">
+                  {{ currentColumn?.name || "Configure column properties" }}
+                </p>
+              </div>
+            </div>
+            <UButton
+              icon="lucide:x"
+              @click="
+                isEditing = false;
+                currentColumn = null;
+              "
+              variant="soft"
+              color="error"
+              :size="(isMobile || isTablet) ? 'sm' : 'lg'"
+              :class="(isMobile || isTablet) ? 'rounded-full !aspect-square flex-shrink-0' : 'lg:hover:bg-error/10 lg:hover:text-error transition-colors duration-200'"
+            />
+          </div>
+        </div>
+      </template>
+
+      <template #body>
+        <div :class="(isMobile || isTablet) ? 'space-y-3 bg-gray-800/50' : 'space-y-6 bg-gray-800/50'" v-if="currentColumn">
+          <!-- Form Section -->
+          <div
+            :class="(isMobile || isTablet) ? 'bg-gradient-to-r from-background/50 to-muted/10 rounded-lg border border-muted/30 p-3' : 'bg-gradient-to-r from-background/50 to-muted/10 rounded-xl border border-muted/30 p-6'"
+          >
+            <div :class="(isMobile || isTablet) ? 'flex items-center gap-1.5 mb-3' : 'flex items-center gap-2 mb-4'">
+              <UIcon name="lucide:edit-3" class="text-info" :size="(isMobile || isTablet) ? '16' : '18'" />
+              <h3 :class="(isMobile || isTablet) ? 'text-sm font-semibold text-foreground' : 'text-lg font-semibold text-foreground'">
+                Column Properties
+              </h3>
+            </div>
+            <FormEditorLazy
+              ref="formEditorRef"
+              v-model="currentColumn"
+              tableName="column_definition"
+              v-model:errors="errors"
+              @has-changed="(hasChanged) => hasFormChanges = hasChanged"
+              :includes="
+                currentColumn.name === getIdFieldName() ? ['name', 'type'] : undefined
+              "
+              :excluded="[
+                'isSystem',
+                'id',
+                'createdAt',
+                'updatedAt',
+                'isPrimary',
+                'table',
+              ]"
+              :type-map="typeMap"
+            />
+          </div>
+        </div>
+      </template>
+
+      <template #footer>
+        <!-- Actions Section -->
+        <div :class="(isMobile || isTablet) ? 'bg-gray-800/50 rounded-lg border border-muted/30 p-3' : 'bg-gray-800/50 rounded-xl border border-muted/30 p-4'">
+          <div class="flex items-center justify-between">
+            <div v-if="!isMobile && !isTablet" class="flex items-center gap-2">
+              <UIcon
+                name="lucide:info"
+                class="text-muted-foreground"
+                size="16"
+              />
+              <span class="text-sm text-muted-foreground">
+                {{
+                  editingIndex !== null
+                    ? "Ready to update column?"
+                    : "Ready to create new column?"
+                }}
+              </span>
+            </div>
+            <div :class="(isMobile || isTablet) ? 'flex gap-1.5 w-full justify-end' : 'flex gap-3'">
+              <UButton
+                variant="ghost"
+                color="neutral"
+                @click="cancelDrawer"
+                :disabled="false"
+                :size="(isMobile || isTablet) ? 'sm' : 'md'"
+                :icon="(isMobile || isTablet) ? 'lucide:x' : undefined"
+                :class="(isMobile || isTablet) ? 'rounded-full !aspect-square' : ''"
+              >
+                <span v-if="!isMobile && !isTablet">Cancel</span>
+              </UButton>
+              <UButton
+                icon="lucide:check"
+                @click="saveColumn()"
+                color="primary"
+                :loading="false"
+                :size="(isMobile || isTablet) ? 'sm' : 'md'"
+                :class="(isMobile || isTablet) ? 'rounded-full !aspect-square' : ''"
+              >
+                <span v-if="!isMobile && !isTablet">{{ editingIndex !== null ? "Update Column" : "Create Column" }}</span>
+              </UButton>
+            </div>
+          </div>
+        </div>
+      </template>
+    </UDrawer>
+
+    <!-- Close Confirmation Modal -->
+    <UModal 
+      v-model:open="showCloseConfirm" 
+      :handle="false"
+      :close="{
+        color: 'error',
+        variant: 'solid',
+        size: 'lg',
+      }"
+    >
+      <template #title>
+        <div class="text-lg font-semibold">Unsaved Changes</div>
+      </template>
+      <template #body>
+        <div class="space-y-4">
+          <p class="text-sm text-gray-300 text-center">
+            You have unsaved changes to this column. Are you sure you want to close? All changes will be lost.
+          </p>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex justify-end gap-2 w-full">
+          <UButton variant="ghost" @click="showCloseConfirm = false">
+            Cancel
+          </UButton>
+          <UButton @click="discardChanges">
+            Discard Changes
+          </UButton>
+        </div>
+      </template>
+    </UModal>
+  </Teleport>
+</template>

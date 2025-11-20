@@ -1,0 +1,44 @@
+# Nuxt dev/build outputs
+.output
+.data
+.nuxt
+.nitro
+.cache
+dist
+
+# Node dependencies
+node_modules
+
+# Logs
+logs
+*.log
+
+# Misc
+.DS_Store
+.fleet
+.idea
+.cursorrules
+
+# Local env files
+.env
+.env.*
+!.env.example
+
+# Local server configuration (never commit)
+server-config.md
+server-config*
+
+# Extension development folder
+enfyra-extension/
+
+# Temp extension builds
+.temp-extension-builds/
+
+# AI Memory Files
+AI_MEMORY_BE.md
+AI_MEMORY_FE.md
+
+# Test coverage reports
+coverage/
+
+tmp/

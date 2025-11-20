@@ -1,0 +1,1 @@
+export const TABLE_NAME_FIELD_REGEX = /^[a-z][a-z0-9_]*$/;
