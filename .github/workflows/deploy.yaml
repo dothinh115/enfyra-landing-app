@@ -22,7 +22,7 @@ jobs:
           sshpass -p "$VPS_PASSWORD" ssh -o StrictHostKeyChecking=no $VPS_USER@$VPS_HOST <<'ENDSSH'
             # Set project variables
             export PROJECT_NAME="landing-app"
-            export APP_DIR="/apps/landing-server"
+            export APP_DIR="/apps/landing-app"
 
             # Setup PATH for tools
             export PATH="$PATH:/usr/bin:/usr/local/bin:$HOME/.local/bin"
@@ -64,7 +64,7 @@ jobs:
 
             # Ensure environment file exists (CI only verifies presence)
             if [ ! -f .env ]; then
-              echo "⚠️  .env not found. Please provision /apps/app/.env manually on the server."
+              echo "⚠️  .env not found. Please provision /apps/landing-app/.env manually on the server."
             fi
 
             # Build application
