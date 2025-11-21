@@ -18,15 +18,12 @@ logs
 .fleet
 .idea
 .cursorrules
+.clauderc
 
 # Local env files
 .env
 .env.*
 !.env.example
-
-# Local server configuration (never commit)
-server-config.md
-server-config*
 
 # Extension development folder
 enfyra-extension/

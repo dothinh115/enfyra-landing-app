@@ -1,9 +1,17 @@
 {
-  "name": "enfyra-landing-app",
-  "version": "0.1.0",
+  "name": "enfyra-app",
+  "version": "0.5.1-beta",
   "description": "Dynamic admin interface for Enfyra backend - auto-generates management UI from database schemas",
   "license": "MIT",
   "author": "dothinh115 <dothinh115@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dothinh115/dynamiq_cms.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dothinh115/dynamiq_cms/issues"
+  },
+  "homepage": "https://github.com/dothinh115/dynamiq_cms#readme",
   "keywords": [
     "cms",
     "nuxt",
@@ -70,6 +78,7 @@
     "vue-json-pretty": "^2.5.0",
     "vue-router": "^4.5.1"
   },
+  "packageManager": "yarn@1.22.19+sha1.4ba7fc5c6e704fce2066ecbfb0b0d8976fe62447",
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.10",
     "@types/lodash": "^4.17.20",
