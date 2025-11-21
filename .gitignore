@@ -25,6 +25,10 @@ logs
 .env.*
 !.env.example
 
+# Local server configuration (never commit)
+server-config.md
+server-config*
+
 # Extension development folder
 enfyra-extension/
 
