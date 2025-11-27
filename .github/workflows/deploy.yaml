@@ -3,6 +3,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"
 
 jobs:
   deploy:
@@ -18,11 +20,13 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PASSWORD: ${{ secrets.VPS_PASSWORD }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           sshpass -p "$VPS_PASSWORD" ssh -o StrictHostKeyChecking=no $VPS_USER@$VPS_HOST <<'ENDSSH'
             # Set project variables
             export PROJECT_NAME="landing-app"
             export APP_DIR="/apps/landing-app"
+            export EVENT_NAME="$EVENT_NAME"
 
             # Setup PATH for tools
             export PATH="$PATH:/usr/bin:/usr/local/bin:$HOME/.local/bin"
@@ -53,7 +57,15 @@ jobs:
 
             # Pull latest code with conflict resolution
             echo "Pulling latest code..."
+            CURRENT_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "none")
             $GIT_PATH fetch origin main
+            REMOTE_COMMIT=$($GIT_PATH rev-parse origin/main)
+
+            if [ "$EVENT_NAME" = "schedule" ] && [ "$CURRENT_COMMIT" = "$REMOTE_COMMIT" ]; then
+              echo "No new commits detected since last deploy. Skipping redeploy."
+              exit 0
+            fi
+
             $GIT_PATH reset --hard origin/main
             $GIT_PATH clean -fd
             echo "✅ Code updated to latest from git (local changes discarded)"
