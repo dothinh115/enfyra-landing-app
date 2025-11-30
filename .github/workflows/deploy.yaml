@@ -55,20 +55,70 @@ jobs:
             cd $APP_DIR
             echo "Current directory: $(pwd)"
 
-            # Pull latest code with conflict resolution
-            echo "Pulling latest code..."
-            CURRENT_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "none")
-            $GIT_PATH fetch origin main
-            REMOTE_COMMIT=$($GIT_PATH rev-parse origin/main)
-
-            if [ "$EVENT_NAME" = "schedule" ] && [ "$CURRENT_COMMIT" = "$REMOTE_COMMIT" ]; then
-              echo "No new commits detected since last deploy. Skipping redeploy."
-              exit 0
+            # Check for new code (only for scheduled runs)
+            if [ "$EVENT_NAME" = "schedule" ]; then
+              echo "=== Checking for new code (scheduled run) ==="
+              
+              # Ensure we're on the right branch
+              $GIT_PATH checkout main 2>/dev/null || true
+              
+              # Get current commit BEFORE fetching
+              CURRENT_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "none")
+              echo "Current local commit: $CURRENT_COMMIT"
+              
+              # Fetch latest from remote (force update)
+              echo "Fetching from origin..."
+              if ! $GIT_PATH fetch origin main --force 2>&1; then
+                echo "⚠️ Failed to fetch from origin. Proceeding with deploy..."
+                CURRENT_COMMIT="fetch_failed"
+              fi
+              
+              # Get remote commit AFTER fetching
+              REMOTE_COMMIT=$($GIT_PATH rev-parse origin/main 2>/dev/null || echo "none")
+              echo "Remote commit (origin/main): $REMOTE_COMMIT"
+              
+              # Also check using git log to see if there are commits ahead
+              if [ "$CURRENT_COMMIT" != "none" ] && [ "$CURRENT_COMMIT" != "fetch_failed" ] && [ "$REMOTE_COMMIT" != "none" ]; then
+                COMMITS_AHEAD=$($GIT_PATH rev-list --count HEAD..origin/main 2>/dev/null || echo "0")
+                echo "Commits ahead of local: $COMMITS_AHEAD"
+                
+                if [ "$COMMITS_AHEAD" = "0" ] && [ "$CURRENT_COMMIT" = "$REMOTE_COMMIT" ]; then
+                  echo "✅ No new commits detected."
+                  echo "   Current: $CURRENT_COMMIT"
+                  echo "   Remote:  $REMOTE_COMMIT"
+                  echo "   Commits ahead: $COMMITS_AHEAD"
+                  echo "Skipping redeploy."
+                  exit 0
+                else
+                  echo "🔄 New commits detected!"
+                  echo "   Current: $CURRENT_COMMIT"
+                  echo "   Remote:  $REMOTE_COMMIT"
+                  echo "   Commits ahead: $COMMITS_AHEAD"
+                  echo "Proceeding with deployment..."
+                fi
+              else
+                echo "⚠️ Cannot reliably determine commit status. Proceeding with deploy."
+                if [ "$CURRENT_COMMIT" = "none" ] || [ "$CURRENT_COMMIT" = "fetch_failed" ]; then
+                  echo "   Reason: Current commit is '$CURRENT_COMMIT'"
+                fi
+                if [ "$REMOTE_COMMIT" = "none" ]; then
+                  echo "   Reason: Remote commit is 'none'"
+                fi
+              fi
+            else
+              echo "=== Deploy triggered by $EVENT_NAME - proceeding with deployment ==="
             fi
 
+            # Pull latest code with conflict resolution
+            echo "=== Updating code from git ==="
+            $GIT_PATH fetch origin main --force
+            $GIT_PATH checkout main 2>/dev/null || true
             $GIT_PATH reset --hard origin/main
             $GIT_PATH clean -fd
-            echo "✅ Code updated to latest from git (local changes discarded)"
+            
+            # Verify the update
+            NEW_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "unknown")
+            echo "✅ Code updated to commit: $NEW_COMMIT"
 
             # Install dependencies with yarn
             echo "Installing dependencies with yarn..."
