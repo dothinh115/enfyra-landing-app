@@ -139,14 +139,6 @@ jobs:
             # Ensure we're on main branch
             $GIT_PATH checkout main 2>/dev/null || true
             
-            # Fetch from origin first
-            echo "Fetching from origin..."
-            $GIT_PATH fetch origin main --force
-            
-            # Reset to origin/main to get latest from our repo
-            $GIT_PATH reset --hard origin/main
-            $GIT_PATH clean -fd
-            
             # Check if upstream remote exists, if not add it
             if ! $GIT_PATH remote get-url upstream >/dev/null 2>&1; then
               echo "Upstream remote not found. Adding upstream remote..."
@@ -155,14 +147,26 @@ jobs:
               }
             fi
             
-            # Fetch from upstream
+            # Fetch from both origin and upstream
+            echo "Fetching from origin and upstream..."
+            $GIT_PATH fetch origin main --force
             if $GIT_PATH remote get-url upstream >/dev/null 2>&1; then
-              echo "Fetching from upstream..."
               $GIT_PATH fetch upstream main --force || {
-                echo "⚠️ Failed to fetch from upstream. Continuing with current code..."
+                echo "⚠️ Failed to fetch from upstream. Continuing with origin only..."
               }
-              
-              # Check if there are commits in upstream that we don't have
+            fi
+            
+            # Save current state before reset
+            CURRENT_BEFORE_RESET=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "none")
+            echo "Current commit before reset: $CURRENT_BEFORE_RESET"
+            
+            # Reset to origin/main to get latest from our repo
+            echo "Resetting to origin/main..."
+            $GIT_PATH reset --hard origin/main
+            $GIT_PATH clean -fd
+            
+            # Now merge upstream if available
+            if $GIT_PATH remote get-url upstream >/dev/null 2>&1; then
               UPSTREAM_COMMIT=$($GIT_PATH rev-parse upstream/main 2>/dev/null || echo "none")
               CURRENT_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "none")
               
@@ -173,15 +177,27 @@ jobs:
                 if [ "$COMMITS_BEHIND" != "0" ]; then
                   echo "🔄 Found $COMMITS_BEHIND new commit(s) from upstream. Merging..."
                   
-                  # Merge upstream/main into current branch
+                  # Merge upstream/main into current branch (after reset to origin/main)
                   $GIT_PATH merge upstream/main --no-edit --no-ff || {
-                    echo "⚠️ Merge conflict detected. Attempting to resolve..."
-                    # If merge fails, try to reset and merge again with strategy
+                    echo "⚠️ Merge conflict detected. Attempting to resolve with strategy..."
+                    # If merge fails, abort and try with strategy
                     $GIT_PATH merge --abort 2>/dev/null || true
-                    $GIT_PATH merge upstream/main --no-edit --strategy-option=theirs || {
-                      echo "❌ Failed to merge upstream. Keeping current code."
+                    $GIT_PATH merge upstream/main --no-edit -X theirs || {
+                      echo "❌ Failed to merge upstream. Keeping origin/main code."
                     }
                   }
+                  
+                  # Verify file exists after merge
+                  if [ -f "app/plugins/03-app-settings.client.ts" ]; then
+                    echo "✅ File 03-app-settings.client.ts exists after merge"
+                  else
+                    echo "⚠️ File 03-app-settings.client.ts NOT found after merge"
+                    echo "Checking upstream for the file..."
+                    $GIT_PATH show upstream/main:app/plugins/03-app-settings.client.ts > /dev/null 2>&1 && {
+                      echo "File exists in upstream. Attempting to restore..."
+                      $GIT_PATH checkout upstream/main -- app/plugins/03-app-settings.client.ts 2>/dev/null || true
+                    }
+                  fi
                   
                   # Push merged code back to origin (if we have write access)
                   echo "Pushing merged code to origin..."
@@ -194,9 +210,18 @@ jobs:
               fi
             fi
             
-            # Verify the final state
+            # Final verification
             FINAL_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "unknown")
             echo "✅ Code updated to commit: $FINAL_COMMIT"
+            
+            # Verify critical files exist
+            if [ -f "app/plugins/03-app-settings.client.ts" ]; then
+              echo "✅ Verified: app/plugins/03-app-settings.client.ts exists"
+            else
+              echo "⚠️ Warning: app/plugins/03-app-settings.client.ts NOT found"
+              echo "Listing plugins directory:"
+              ls -la app/plugins/ || true
+            fi
 
             # Install dependencies with yarn
             echo "Installing dependencies with yarn..."
@@ -247,3 +272,4 @@ jobs:
 
             echo "=== PM2 Deployment completed successfully ==="
           ENDSSH
+
