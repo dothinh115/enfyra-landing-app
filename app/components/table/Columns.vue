@@ -79,7 +79,7 @@ function saveColumn() {
         return "Column name is required";
       }
       if (!TABLE_NAME_FIELD_REGEX.test(value)) {
-        return "Only letters, numbers, _ allowed and cannot start with number or _!";
+        return "Only letters (a-z, A-Z), numbers, _ allowed and must start with a letter!";
       }
       return null;
     },
@@ -194,6 +194,7 @@ function getDefaultValueType(columnType: string) {
       return "text";
 
     case "code":
+    case "simple-json":
       return "code";
 
     case "array-select":
@@ -235,6 +236,15 @@ const typeMap = computed(() => {
     ...(currentType === "text" && {
       defaultValue: {
         excluded: true,
+      },
+    }),
+
+    ...(currentType === "simple-json" && {
+      defaultValue: {
+        type: "code",
+        componentProps: {
+          language: "json",
+        },
       },
     }),
 
