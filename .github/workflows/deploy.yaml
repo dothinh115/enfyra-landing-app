@@ -6,10 +6,72 @@ on:
   schedule:
     - cron: "0 * * * *"
 
+# Allow this workflow to push changes back to the repository
+permissions:
+  contents: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Sync main with upstream and push to origin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Ensure upstream remote exists
+          if ! git remote get-url upstream >/dev/null 2>&1; then
+            echo "Adding upstream remote..."
+            git remote add upstream https://github.com/enfyra/app.git
+          fi
+
+          echo "Fetching origin and upstream..."
+          git fetch origin main --force
+          git fetch upstream main --force || {
+            echo "⚠️ Failed to fetch upstream. Continuing with origin only..."
+          }
+
+          echo "Checking out main and resetting to origin/main..."
+          git checkout main
+          git reset --hard origin/main
+
+          # Merge upstream/main into main if there are new commits
+          if git rev-parse --quiet upstream/main >/dev/null; then
+            COMMITS_BEHIND=$(git rev-list --count HEAD..upstream/main 2>/dev/null || echo "0")
+            echo "Commits behind upstream/main: $COMMITS_BEHIND"
+
+            if [ "$COMMITS_BEHIND" != "0" ]; then
+              echo "🔄 Merging upstream/main into main..."
+              git merge upstream/main --no-edit --no-ff || {
+                echo "⚠️ Merge conflict detected. Retrying with 'theirs' strategy..."
+                git merge --abort 2>/dev/null || true
+                git merge upstream/main --no-edit -X theirs || {
+                  echo "❌ Failed to merge upstream/main. Keeping origin/main state."
+                }
+              }
+            else
+              echo "✅ main is already up to date with upstream/main."
+            fi
+          else
+            echo "ℹ️ upstream/main not available. Skipping upstream merge."
+          fi
+
+          # Only push if HEAD differs from origin/main
+          if ! git diff --quiet origin/main..HEAD; then
+            echo "Pushing updated main to origin..."
+            git push origin main --force-with-lease
+          else
+            echo "✅ No changes to push to origin/main."
+          fi
+
       - name: Install sshpass
         run: |
           sudo apt-get update -y
@@ -55,161 +117,32 @@ jobs:
             cd $APP_DIR
             echo "Current directory: $(pwd)"
 
-            # Check for new code (only for scheduled runs)
-            if [ "$EVENT_NAME" = "schedule" ]; then
-              echo "=== Checking for new code (scheduled run) ==="
-              
-              # Ensure we're on the right branch
-              $GIT_PATH checkout main 2>/dev/null || true
-              
-              # Get current commit BEFORE fetching
-              CURRENT_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "none")
-              echo "Current local commit: $CURRENT_COMMIT"
-              
-              # Fetch latest from origin
-              echo "Fetching from origin..."
-              if ! $GIT_PATH fetch origin main --force 2>&1; then
-                echo "⚠️ Failed to fetch from origin. Proceeding with deploy..."
-                CURRENT_COMMIT="fetch_failed"
-              fi
-              
-              # Get remote commit from origin
-              ORIGIN_COMMIT=$($GIT_PATH rev-parse origin/main 2>/dev/null || echo "none")
-              echo "Remote commit (origin/main): $ORIGIN_COMMIT"
-              
-              # Check if upstream remote exists, if not add it
-              if ! $GIT_PATH remote get-url upstream >/dev/null 2>&1; then
-                echo "Upstream remote not found. Adding upstream remote..."
-                $GIT_PATH remote add upstream https://github.com/enfyra/app.git 2>/dev/null || true
-              fi
-              
-              # Fetch from upstream
-              UPSTREAM_COMMIT="none"
-              COMMITS_FROM_UPSTREAM=0
-              if $GIT_PATH remote get-url upstream >/dev/null 2>&1; then
-                echo "Fetching from upstream..."
-                if $GIT_PATH fetch upstream main --force 2>&1; then
-                  UPSTREAM_COMMIT=$($GIT_PATH rev-parse upstream/main 2>/dev/null || echo "none")
-                  echo "Remote commit (upstream/main): $UPSTREAM_COMMIT"
-                  
-                  if [ "$CURRENT_COMMIT" != "none" ] && [ "$UPSTREAM_COMMIT" != "none" ]; then
-                    COMMITS_FROM_UPSTREAM=$($GIT_PATH rev-list --count HEAD..upstream/main 2>/dev/null || echo "0")
-                    echo "Commits available from upstream: $COMMITS_FROM_UPSTREAM"
-                  fi
-                else
-                  echo "⚠️ Failed to fetch from upstream. Will check origin only."
-                fi
-              fi
-              
-              # Check commits from origin
-              COMMITS_FROM_ORIGIN=0
-              if [ "$CURRENT_COMMIT" != "none" ] && [ "$CURRENT_COMMIT" != "fetch_failed" ] && [ "$ORIGIN_COMMIT" != "none" ]; then
-                COMMITS_FROM_ORIGIN=$($GIT_PATH rev-list --count HEAD..origin/main 2>/dev/null || echo "0")
-                echo "Commits ahead from origin: $COMMITS_FROM_ORIGIN"
-              fi
-              
-              # Decide whether to skip or deploy
-              if [ "$CURRENT_COMMIT" = "none" ] || [ "$CURRENT_COMMIT" = "fetch_failed" ]; then
-                echo "⚠️ Cannot determine current commit. Proceeding with deploy."
-              elif [ "$COMMITS_FROM_ORIGIN" = "0" ] && [ "$COMMITS_FROM_UPSTREAM" = "0" ] && [ "$CURRENT_COMMIT" = "$ORIGIN_COMMIT" ]; then
-                echo "✅ No new commits detected."
-                echo "   Current: $CURRENT_COMMIT"
-                echo "   Origin:  $ORIGIN_COMMIT"
-                echo "   Upstream: $UPSTREAM_COMMIT"
-                echo "   Commits from origin: $COMMITS_FROM_ORIGIN"
-                echo "   Commits from upstream: $COMMITS_FROM_UPSTREAM"
-                echo "Skipping redeploy."
-                exit 0
-              else
-                echo "🔄 New commits detected!"
-                echo "   Current: $CURRENT_COMMIT"
-                echo "   Origin:  $ORIGIN_COMMIT"
-                echo "   Upstream: $UPSTREAM_COMMIT"
-                echo "   Commits from origin: $COMMITS_FROM_ORIGIN"
-                echo "   Commits from upstream: $COMMITS_FROM_UPSTREAM"
-                echo "Proceeding with deployment..."
-              fi
-            else
-              echo "=== Deploy triggered by $EVENT_NAME - proceeding with deployment ==="
-            fi
+            echo "=== Updating code from origin/main (merge already handled on GitHub) ==="
 
-            # Sync with upstream and pull latest code
-            echo "=== Syncing with upstream and updating code ==="
-            
             # Ensure we're on main branch
             $GIT_PATH checkout main 2>/dev/null || true
-            
-            # Check if upstream remote exists, if not add it
-            if ! $GIT_PATH remote get-url upstream >/dev/null 2>&1; then
-              echo "Upstream remote not found. Adding upstream remote..."
-              $GIT_PATH remote add upstream https://github.com/enfyra/app.git 2>/dev/null || {
-                echo "⚠️ Failed to add upstream remote. Continuing without upstream sync..."
-              }
-            fi
-            
-            # Fetch from both origin and upstream
-            echo "Fetching from origin and upstream..."
-            $GIT_PATH fetch origin main --force
-            if $GIT_PATH remote get-url upstream >/dev/null 2>&1; then
-              $GIT_PATH fetch upstream main --force || {
-                echo "⚠️ Failed to fetch from upstream. Continuing with origin only..."
-              }
-            fi
-            
-            # Save current state before reset
-            CURRENT_BEFORE_RESET=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "none")
-            echo "Current commit before reset: $CURRENT_BEFORE_RESET"
-            
-            # Reset to origin/main to get latest from our repo
-            echo "Resetting to origin/main..."
-            $GIT_PATH reset --hard origin/main
-            $GIT_PATH clean -fd
-            
-            # Now merge upstream if available
-            if $GIT_PATH remote get-url upstream >/dev/null 2>&1; then
-              UPSTREAM_COMMIT=$($GIT_PATH rev-parse upstream/main 2>/dev/null || echo "none")
-              CURRENT_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "none")
-              
-              if [ "$UPSTREAM_COMMIT" != "none" ] && [ "$CURRENT_COMMIT" != "none" ]; then
-                # Check if upstream has commits we don't have
-                COMMITS_BEHIND=$($GIT_PATH rev-list --count HEAD..upstream/main 2>/dev/null || echo "0")
-                
-                if [ "$COMMITS_BEHIND" != "0" ]; then
-                  echo "🔄 Found $COMMITS_BEHIND new commit(s) from upstream. Merging..."
-                  
-                  # Merge upstream/main into current branch (after reset to origin/main)
-                  $GIT_PATH merge upstream/main --no-edit --no-ff || {
-                    echo "⚠️ Merge conflict detected. Attempting to resolve with strategy..."
-                    # If merge fails, abort and try with strategy
-                    $GIT_PATH merge --abort 2>/dev/null || true
-                    $GIT_PATH merge upstream/main --no-edit -X theirs || {
-                      echo "❌ Failed to merge upstream. Keeping origin/main code."
-                    }
-                  }
-                  
-                  # Verify file exists after merge
-                  if [ -f "app/plugins/03-app-settings.client.ts" ]; then
-                    echo "✅ File 03-app-settings.client.ts exists after merge"
-                  else
-                    echo "⚠️ File 03-app-settings.client.ts NOT found after merge"
-                    echo "Checking upstream for the file..."
-                    $GIT_PATH show upstream/main:app/plugins/03-app-settings.client.ts > /dev/null 2>&1 && {
-                      echo "File exists in upstream. Attempting to restore..."
-                      $GIT_PATH checkout upstream/main -- app/plugins/03-app-settings.client.ts 2>/dev/null || true
-                    }
-                  fi
-                  
-                  # Push merged code back to origin (if we have write access)
-                  echo "Pushing merged code to origin..."
-                  $GIT_PATH push origin main --force-with-lease 2>&1 || {
-                    echo "⚠️ Failed to push to origin (may not have write access). Continuing with local merge..."
-                  }
-                else
-                  echo "✅ Already up to date with upstream."
-                fi
+
+            # Capture current commit before fetch
+            CURRENT_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "none")
+            echo "Current local commit: $CURRENT_COMMIT"
+
+            # Fetch latest from origin and reset
+            if $GIT_PATH fetch origin main --force 2>&1; then
+              ORIGIN_COMMIT=$($GIT_PATH rev-parse origin/main 2>/dev/null || echo "none")
+              echo "Remote commit (origin/main): $ORIGIN_COMMIT"
+
+              if [ "$CURRENT_COMMIT" != "none" ] && [ "$ORIGIN_COMMIT" != "none" ] && [ "$CURRENT_COMMIT" = "$ORIGIN_COMMIT" ]; then
+                echo "✅ No new commits on origin/main. Skipping redeploy."
+                exit 0
               fi
+
+              echo "Resetting to origin/main..."
+              $GIT_PATH reset --hard origin/main
+              $GIT_PATH clean -fd
+            else
+              echo "⚠️ Failed to fetch from origin. Continuing with existing code..."
             fi
-            
+
             # Final verification
             FINAL_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "unknown")
             echo "✅ Code updated to commit: $FINAL_COMMIT"
