@@ -118,31 +118,31 @@ jobs:
             echo "Current directory: $(pwd)"
 
             echo "=== Updating code from origin/main (merge already handled on GitHub) ==="
-
+              
             # Ensure we're on main branch
-            $GIT_PATH checkout main 2>/dev/null || true
-
+              $GIT_PATH checkout main 2>/dev/null || true
+              
             # Capture current commit before fetch
-            CURRENT_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "none")
-            echo "Current local commit: $CURRENT_COMMIT"
-
+              CURRENT_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "none")
+              echo "Current local commit: $CURRENT_COMMIT"
+              
             # Fetch latest from origin and reset
             if $GIT_PATH fetch origin main --force 2>&1; then
               ORIGIN_COMMIT=$($GIT_PATH rev-parse origin/main 2>/dev/null || echo "none")
               echo "Remote commit (origin/main): $ORIGIN_COMMIT"
-
+              
               if [ "$CURRENT_COMMIT" != "none" ] && [ "$ORIGIN_COMMIT" != "none" ] && [ "$CURRENT_COMMIT" = "$ORIGIN_COMMIT" ]; then
                 echo "✅ No new commits on origin/main. Skipping redeploy."
                 exit 0
               fi
 
-              echo "Resetting to origin/main..."
-              $GIT_PATH reset --hard origin/main
-              $GIT_PATH clean -fd
+            echo "Resetting to origin/main..."
+            $GIT_PATH reset --hard origin/main
+            $GIT_PATH clean -fd
             else
               echo "⚠️ Failed to fetch from origin. Continuing with existing code..."
             fi
-
+            
             # Final verification
             FINAL_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "unknown")
             echo "✅ Code updated to commit: $FINAL_COMMIT"
@@ -156,9 +156,13 @@ jobs:
               ls -la app/plugins/ || true
             fi
 
+            # Update latest packages first, then install dependencies
+            echo "Updating latest packages..."
+            $YARN_PATH upgrade @enfyra/sdk-nuxt lodash-es --latest || echo "⚠️  Some packages may not have been updated"
+            
             # Install dependencies with yarn
             echo "Installing dependencies with yarn..."
-            $YARN_PATH install --frozen-lockfile
+            $YARN_PATH install
 
             # Ensure environment file exists (CI only verifies presence)
             if [ ! -f .env ]; then
