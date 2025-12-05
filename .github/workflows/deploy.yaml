@@ -160,8 +160,17 @@ jobs:
             # Note: Removed yarn upgrade to avoid memory issues and stuck processes
             echo "Installing dependencies with yarn..."
             # Increase Node.js heap size to avoid OOM during yarn install
-            export NODE_OPTIONS="--max-old-space-size=4096"
-            $YARN_PATH install --ignore-engines --network-timeout 100000 || {
+            # Set NODE_OPTIONS both as export and inline to ensure yarn inherits it
+            export NODE_OPTIONS="--max-old-space-size=8192"
+            # Use frozen lockfile to avoid dependency resolution (saves memory)
+            # Reduce network concurrency to lower memory usage
+            # Force NODE_OPTIONS by setting it inline
+            env NODE_OPTIONS="--max-old-space-size=8192" $YARN_PATH install \
+              --ignore-engines \
+              --network-timeout 100000 \
+              --frozen-lockfile \
+              --network-concurrency 1 \
+              --prefer-offline || {
               echo "⚠️  yarn install had warnings but continuing..."
             }
 
@@ -173,8 +182,11 @@ jobs:
             # Build application
             echo "Building application..."
             # Ensure NODE_OPTIONS is set for build to avoid OOM
-            export NODE_OPTIONS="--max-old-space-size=4096"
-            $YARN_PATH build
+            export NODE_OPTIONS="--max-old-space-size=8192"
+            env NODE_OPTIONS="--max-old-space-size=8192" $YARN_PATH build || {
+              echo "❌ Build failed"
+              exit 1
+            }
 
             # Stop PM2 application completely to avoid conflicts
             echo "Stopping PM2 application..."
