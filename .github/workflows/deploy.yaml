@@ -156,11 +156,8 @@ jobs:
               ls -la app/plugins/ || true
             fi
 
-            # Update latest packages first, then install dependencies
-            echo "Updating latest packages..."
-            $YARN_PATH upgrade @enfyra/sdk-nuxt lodash-es --latest || echo "⚠️  Some packages may not have been updated"
-            
             # Install dependencies with yarn
+            # Note: Removed yarn upgrade to avoid memory issues and stuck processes
             echo "Installing dependencies with yarn..."
             $YARN_PATH install
 
