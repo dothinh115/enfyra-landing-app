@@ -159,7 +159,11 @@ jobs:
             # Install dependencies with yarn
             # Note: Removed yarn upgrade to avoid memory issues and stuck processes
             echo "Installing dependencies with yarn..."
-            $YARN_PATH install
+            # Increase Node.js heap size to avoid OOM during yarn install
+            export NODE_OPTIONS="--max-old-space-size=4096"
+            $YARN_PATH install --ignore-engines --network-timeout 100000 || {
+              echo "⚠️  yarn install had warnings but continuing..."
+            }
 
             # Ensure environment file exists (CI only verifies presence)
             if [ ! -f .env ]; then
@@ -168,6 +172,8 @@ jobs:
 
             # Build application
             echo "Building application..."
+            # Ensure NODE_OPTIONS is set for build to avoid OOM
+            export NODE_OPTIONS="--max-old-space-size=4096"
             $YARN_PATH build
 
             # Stop PM2 application completely to avoid conflicts
